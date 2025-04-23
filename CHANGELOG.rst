@@ -2,9 +2,9 @@
 Changelog for package qml_ros2_plugin
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-1.25.2 (2025-02-07)
+2.25.2 (2025-02-07)
 -------------------
-* Apply required changes due to change of array template parameters in ros_babel_fish.
+* Apply required changes due to refactoring of array size in ros_babel_fish.
 * Updated communication test message fields in accordance to renaming in ros_babel_fish_test_msgs.
 * Fixed crashes when exiting application due to node still being used.
 * Added method to create an empty action goal for a given action with the Ros2 singleton.
