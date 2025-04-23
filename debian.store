@@ -1,1 +1,1 @@
-{"base": "e8892dc", "parent": "debian/rolling/qml_ros2_plugin", "previous": "0980154", "trim": "", "trimbase": ""}
+{"base": "3882c5293e19", "parent": "debian/kilted/qml_ros2_plugin", "previous": "25a685500689", "trim": "", "trimbase": ""}
