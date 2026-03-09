@@ -1,0 +1,13 @@
+Source: ros-rolling-qml-ros2-plugin
+Section: misc
+Priority: optional
+Maintainer: Stefan Fabian <qml_ros2_plugin@stefanfabian.me>
+Build-Depends: debhelper (>= 9.0.0), libqt5core5a, libqt5multimedia5, libqt5qml5, libqt5quick5, libyaml-cpp-dev, qml-module-qtquick2 <!nocheck>, qtbase5-dev, qtdeclarative5-dev, qtmultimedia5-dev, ros-rolling-ament-cmake, ros-rolling-ament-cmake-gtest <!nocheck>, ros-rolling-ament-index-cpp, ros-rolling-ament-lint-auto <!nocheck>, ros-rolling-example-interfaces <!nocheck>, ros-rolling-image-transport, ros-rolling-rclcpp, ros-rolling-ros-babel-fish, ros-rolling-ros-babel-fish-test-msgs <!nocheck>, ros-rolling-std-srvs <!nocheck>, ros-rolling-tf2-ros, ros-rolling-ros-workspace
+Homepage: 
+Standards-Version: 3.9.2
+
+Package: ros-rolling-qml-ros2-plugin
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libqt5core5a, libqt5multimedia5, libqt5qml5, libqt5quick5, libyaml-cpp-dev, ros-rolling-ament-index-cpp, ros-rolling-image-transport, ros-rolling-rclcpp, ros-rolling-ros-babel-fish, ros-rolling-tf2-ros, ros-rolling-ros-workspace
+Description: A QML plugin for ROS.
+ Enables full communication with ROS from QML.
