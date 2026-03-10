@@ -2,9 +2,9 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #include "qml_ros2_plugin/publisher.hpp"
+#include "logging.hpp"
 #include "qml_ros2_plugin/babel_fish_dispenser.hpp"
 #include "qml_ros2_plugin/conversion/message_conversions.hpp"
-#include "qml_ros2_plugin/helpers/logging.hpp"
 #include "qml_ros2_plugin/ros2.hpp"
 
 using namespace ros_babel_fish;
@@ -13,9 +13,8 @@ using namespace qml_ros2_plugin::conversion;
 namespace qml_ros2_plugin
 {
 
-Publisher::Publisher( QString topic, QString type, uint32_t queue_size )
-    : is_advertised_( false ), type_( std::move( type ) ), topic_( std::move( topic ) ),
-      queue_size_( queue_size )
+Publisher::Publisher( QString topic, QString type, const QoSWrapper &qos )
+    : qos_( qos ), type_( std::move( type ) ), topic_( std::move( topic ) ), is_advertised_( false )
 {
   std_type_ = type_.toStdString();
   babel_fish_ = BabelFishDispenser::getBabelFish();
@@ -30,7 +29,9 @@ QString Publisher::topic() const { return QString::fromStdString( publisher_->ge
 
 const QString &Publisher::type() const { return type_; }
 
-quint32 Publisher::queueSize() const { return queue_size_; }
+quint32 Publisher::queueSize() const { return qos_.depth(); }
+
+const QoSWrapper &Publisher::qos() const { return qos_; }
 
 bool Publisher::isAdvertised() const { return is_advertised_; }
 
@@ -76,13 +77,17 @@ void Publisher::advertise()
   if ( node == nullptr )
     return;
   try {
-    auto qos = rclcpp::QoS( queue_size_ ); // TODO latched
-    publisher_ = babel_fish_.create_publisher( *node, topic_.toStdString(), std_type_, qos, {} );
+    publisher_ =
+        babel_fish_.create_publisher( *node, topic_.toStdString(), std_type_, qos_.rclcppQoS(), {} );
     advertise_timer_.stop();
     is_advertised_ = true;
     emit advertised();
   } catch ( BabelFishException &ex ) {
     QML_ROS2_PLUGIN_ERROR( "Failed to create publisher: %s", ex.what() );
+  } catch ( std::exception &ex ) {
+    QML_ROS2_PLUGIN_ERROR( "Failed to create publisher: %s", ex.what() );
+  } catch ( ... ) {
+    QML_ROS2_PLUGIN_ERROR( "Failed to create publisher: Unknown error" );
   }
 }
 } // namespace qml_ros2_plugin
