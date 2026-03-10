@@ -2,14 +2,14 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #include "qml_ros2_plugin/tf_transform_listener.hpp"
-#include "logging.hpp"
 #include "qml_ros2_plugin/conversion/message_conversions.hpp"
 #include "qml_ros2_plugin/conversion/qml_ros_conversion.hpp"
+#include "qml_ros2_plugin/helpers/logging.hpp"
 #include "qml_ros2_plugin/ros2.hpp"
 
 #include <QVariantMap>
 #include <memory>
-#include <tf2_ros/transform_listener.h>
+#include <tf2_ros/transform_listener.hpp>
 
 using namespace qml_ros2_plugin::conversion;
 
@@ -18,7 +18,7 @@ namespace qml_ros2_plugin
 
 struct TfTransformListener::State {
   explicit State( rclcpp::Node::SharedPtr node )
-      : buffer( node->get_clock() ), listener( buffer, node, false )
+      : buffer( node->get_clock() ), listener( buffer, *node, false )
   {
     buffer.setUsingDedicatedThread( true );
   }
@@ -109,7 +109,7 @@ QVariant TfTransformListener::canTransform( const QString &target_frame,
 
 QVariantMap TfTransformListener::lookUpTransform( const QString &target_frame,
                                                   const QString &source_frame,
-                                                  const rclcpp::Time &time, double timeout ) const
+                                                  const rclcpp::Time &time, double timeout )
 {
   geometry_msgs::msg::TransformStamped transform;
   if ( !isInitialized() ) {
@@ -169,7 +169,7 @@ QVariantMap TfTransformListener::lookUpTransform( const QString &target_frame,
                                                   const rclcpp::Time &target_time,
                                                   const QString &source_frame,
                                                   const rclcpp::Time &source_time,
-                                                  const QString &fixed_frame, double timeout ) const
+                                                  const QString &fixed_frame, double timeout )
 {
   geometry_msgs::msg::TransformStamped transform;
   if ( !isInitialized() ) {

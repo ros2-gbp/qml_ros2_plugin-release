@@ -18,9 +18,6 @@ namespace qml_ros2_plugin
 
 QString AmentIndex::getPackageShareDirectory( const QString &package_name )
 {
-  if ( package_name.isEmpty() ) {
-    return {};
-  }
   try {
 #if AMENT_INDEX_CPP_VERSION_GTE( 1, 13, 0 )
     std::filesystem::path path;

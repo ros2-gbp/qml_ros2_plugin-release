@@ -2,10 +2,10 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #include "qml_ros2_plugin/ros2.hpp"
-#include "logging.hpp"
 #include "qml_ros2_plugin/action_client.hpp"
 #include "qml_ros2_plugin/babel_fish_dispenser.hpp"
 #include "qml_ros2_plugin/conversion/message_conversions.hpp"
+#include "qml_ros2_plugin/helpers/logging.hpp"
 #include "qml_ros2_plugin/publisher.hpp"
 #include "qml_ros2_plugin/qos.hpp"
 #include "qml_ros2_plugin/service_client.hpp"
@@ -14,7 +14,6 @@
 #include <QCoreApplication>
 #include <QHostInfo>
 #include <QJSEngine>
-#include <rcl/validate_topic_name.h>
 #include <rcl_action/graph.h>
 #include <thread>
 
@@ -102,13 +101,13 @@ void Ros2Qml::init( const QString &name, const QStringList &argv, Ros2InitOption
   executor_options.context = context_;
   // StaticSingleThreadedExecutor may be a bit faster but will keep a reference to the subscription
   // and therefore not unsubscribe if the subscription is reset.
-  auto queue = std::make_unique<rclcpp::experimental::executors::SimpleEventsQueue>();
-  auto executor = rclcpp::experimental::executors::EventsExecutor::make_unique(
-      std::move( queue ), false, executor_options );
+  auto executor = rclcpp::executors::SingleThreadedExecutor::make_unique( executor_options );
   executor->add_node( node_ );
   emit initialized();
 
-  executor_thread_ = std::thread( [exec = std::move( executor )]() { exec->spin(); } );
+  executor_thread_ = std::thread( [this, exec = std::move( executor )]() {
+    while ( !is_shutdown_ ) { exec->spin_some(); }
+  } );
   QML_ROS2_PLUGIN_DEBUG( "QML Ros2 initialized." );
 }
 
@@ -116,9 +115,10 @@ void Ros2Qml::shutdown()
 {
   QML_ROS2_PLUGIN_DEBUG( "Shutting down Ros2Qml..." );
   emit aboutToShutdown();
-  rclcpp::shutdown( context_, "Shutting down Ros2Qml." );
+  is_shutdown_ = true;
   if ( executor_thread_.joinable() )
     executor_thread_.join();
+  rclcpp::shutdown( context_, "Shutting down Ros2Qml." );
   node_ = nullptr;
   context_ = nullptr;
   QML_ROS2_PLUGIN_DEBUG( "Ros2Qml shut down." );
@@ -152,9 +152,6 @@ QStringList Ros2Qml::queryTopics( const QString &datatype ) const
   QStringList result;
   std::string std_datatype = toFullyQualifiedDatatype( datatype.toStdString() );
   for ( const auto &[topic, types] : topics_and_types ) {
-    if ( topic.find( "/_action/" ) != std::string::npos ) {
-      continue;
-    }
     if ( !std_datatype.empty() &&
          std::find( types.begin(), types.end(), std_datatype ) == types.end() )
       continue;
@@ -436,20 +433,6 @@ QString Ros2QmlSingletonWrapper::getNamespace()
   if ( !isInitialized() )
     return {};
   return QString::fromStdString( Ros2Qml::getInstance().node()->get_namespace() );
-}
-
-bool Ros2QmlSingletonWrapper::isValidTopic( const QString &topic ) const
-{
-  int validation_result;
-  size_t invalid_index;
-  rcl_ret_t ret =
-      rcl_validate_topic_name( topic.toStdString().c_str(), &validation_result, &invalid_index );
-  if ( ret != RCL_RET_OK ) {
-    QML_ROS2_PLUGIN_ERROR( "Failed to validate topic name '%s': %s", topic.toStdString().c_str(),
-                           rcl_get_error_string().str );
-    return false;
-  }
-  return validation_result == RCL_TOPIC_NAME_VALID;
 }
 
 QStringList Ros2QmlSingletonWrapper::queryTopics( const QString &datatype ) const

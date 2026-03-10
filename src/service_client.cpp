@@ -2,9 +2,9 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #include "qml_ros2_plugin/service_client.hpp"
-#include "logging.hpp"
 #include "qml_ros2_plugin/babel_fish_dispenser.hpp"
 #include "qml_ros2_plugin/conversion/message_conversions.hpp"
+#include "qml_ros2_plugin/helpers/logging.hpp"
 #include "qml_ros2_plugin/ros2.hpp"
 
 #include <QJSEngine>
@@ -19,9 +19,6 @@ ServiceClient::ServiceClient( QString name, QString type, const QoSWrapper &qos 
     : qos_( qos ), name_( std::move( name ) ), service_type_( std::move( type ) )
 {
   babel_fish_ = BabelFishDispenser::getBabelFish();
-  connect_timer_.setInterval( 16 );
-  connect_timer_.setSingleShot( false );
-  connect( &connect_timer_, &QTimer::timeout, this, &ServiceClient::checkServiceReady );
 }
 
 ServiceClient::~ServiceClient()
@@ -42,15 +39,10 @@ void ServiceClient::onRos2Initialized()
     QML_ROS2_PLUGIN_ERROR( "Could not create ServiceClient: %s", ex.what() );
     client_ = nullptr;
     return;
-  } catch ( std::exception &ex ) {
-    QML_ROS2_PLUGIN_ERROR( "Could not create ServiceClient: %s", ex.what() );
-    client_ = nullptr;
-    return;
-  } catch ( ... ) {
-    QML_ROS2_PLUGIN_ERROR( "Could not create ServiceClient: Unknown error." );
-    client_ = nullptr;
-    return;
   }
+  connect_timer_.setInterval( 16 );
+  connect_timer_.setSingleShot( false );
+  connect( &connect_timer_, &QTimer::timeout, this, &ServiceClient::checkServiceReady );
   connect_timer_.start();
 }
 
@@ -78,8 +70,8 @@ void ServiceClient::checkServiceReady()
     }
     return;
   }
-  QML_ROS2_PLUGIN_DEBUG( "Service '%s' is ready.", name_.toStdString().c_str() );
   connect_timer_.stop();
+  disconnect( &connect_timer_, &QTimer::timeout, this, &ServiceClient::checkServiceReady );
   emit serviceReadyChanged();
 
   if ( waiting_service_calls_.empty() )
@@ -99,7 +91,6 @@ void ServiceClient::checkServiceReady()
     sendRequestAsync( call.request, it->second );
     pending_callbacks_.erase( it );
   }
-  waiting_service_calls_.clear();
   blockSignals( false );
   emit pendingRequestsChanged();
 }

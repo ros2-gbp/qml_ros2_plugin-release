@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.10)
 project(qml_ros2_plugin VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 17)
 
@@ -42,7 +42,6 @@ set(SOURCES
   include/qml_ros2_plugin/image_transport_subscription.hpp
   include/qml_ros2_plugin/io.hpp
   include/qml_ros2_plugin/logger.hpp
-  include/qml_ros2_plugin/message_item_model.hpp
   include/qml_ros2_plugin/publisher.hpp
   include/qml_ros2_plugin/qobject_ros2.hpp
   include/qml_ros2_plugin/qos.hpp
@@ -65,7 +64,6 @@ set(SOURCES
   src/io.cpp
   src/logger.cpp
   src/message_conversions.cpp
-  src/message_item_model.cpp
   src/publisher.cpp
   src/qml_ros2_plugin.cpp
   src/qobject_ros2.cpp
@@ -83,15 +81,21 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-target_compile_definitions(${PROJECT_NAME} PRIVATE RCLCPP_MAJOR_VERSION=${rclcpp_VERSION_MAJOR})
 target_include_directories(${PROJECT_NAME} PUBLIC
   ${Qt5Core_INCLUDE_DIRS}
   ${Qt5Multimedia_INCLUDE_DIRS}
   ${Qt5Qml_INCLUDE_DIRS}
   ${Qt5Quick_INCLUDE_DIRS}
 )
-target_link_libraries(${PROJECT_NAME} Qt5::Core Qt5::Multimedia Qt5::Qml Qt5::Quick ${YAML_CPP_LIBRARIES})
-ament_target_dependencies(${PROJECT_NAME} ament_index_cpp rclcpp image_transport ros_babel_fish tf2_ros)
+target_link_libraries(${PROJECT_NAME} PUBLIC
+  Qt5::Core Qt5::Multimedia Qt5::Qml Qt5::Quick ${YAML_CPP_LIBRARIES}
+  ament_index_cpp::ament_index_cpp
+  image_transport::image_transport
+  rclcpp::rclcpp
+  ros_babel_fish::ros_babel_fish
+  tf2_ros::static_transform_broadcaster_node
+  tf2_ros::tf2_ros
+)
 
 #############
 ## Testing ##
@@ -107,34 +111,52 @@ if(BUILD_TESTING)
   find_package(std_srvs REQUIRED)
   find_package(Qt5Test REQUIRED)
 
-  set(TEST_DEPENDENCIES example_interfaces ros_babel_fish_test_msgs std_srvs)
+  
 
   ament_add_gtest(test_communication test/communication.cpp)
-  ament_target_dependencies(test_communication ${TEST_DEPENDENCIES})
-  target_link_libraries(test_communication ${PROJECT_NAME} Qt5::Test)
+  target_link_libraries(test_communication 
+    ${example_interfaces_TARGETS}
+    ${ros_babel_fish_test_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${PROJECT_NAME} Qt5::Test)
 
   ament_add_gtest(test_image_conversions test/image_conversions.cpp)
-  ament_target_dependencies(test_image_conversions  ${TEST_DEPENDENCIES})
-  target_link_libraries(test_image_conversions ${PROJECT_NAME})
+  target_link_libraries(test_image_conversions
+    ${example_interfaces_TARGETS}
+    ${ros_babel_fish_test_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${PROJECT_NAME})
 
   ament_add_gtest(test_image_transport_subscriber test/image_transport_subscriber.cpp)
-  ament_target_dependencies(test_image_transport_subscriber  ${TEST_DEPENDENCIES})
-  target_link_libraries(test_image_transport_subscriber ${PROJECT_NAME})
+  target_link_libraries(test_image_transport_subscriber
+    ${example_interfaces_TARGETS}
+    ${ros_babel_fish_test_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${PROJECT_NAME})
 
   ament_add_gtest(test_message_conversions test/message_conversions.cpp)
-  ament_target_dependencies(test_message_conversions  ${TEST_DEPENDENCIES})
-  target_link_libraries(test_message_conversions ${PROJECT_NAME})
+  target_link_libraries(test_message_conversions
+    ${example_interfaces_TARGETS}
+    ${ros_babel_fish_test_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${PROJECT_NAME})
 
   ament_add_gtest(test_ros_life_cycle test/ros_life_cycle.cpp)
-  ament_target_dependencies(test_ros_life_cycle  ${TEST_DEPENDENCIES})
-  target_link_libraries(test_ros_life_cycle ${PROJECT_NAME})
+  target_link_libraries(test_ros_life_cycle
+    ${example_interfaces_TARGETS}
+    ${ros_babel_fish_test_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${PROJECT_NAME})
 
   ament_add_gtest(test_logging test/logging.cpp)
   target_link_libraries(test_logging ${PROJECT_NAME})
   #
   ament_add_gtest(test_io test/io.cpp)
-  ament_target_dependencies(test_io  ${TEST_DEPENDENCIES})
-  target_link_libraries(test_io ${PROJECT_NAME})
+  target_link_libraries(test_io
+    ${example_interfaces_TARGETS}
+    ${ros_babel_fish_test_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${PROJECT_NAME})
 
   install(DIRECTORY test/test_io DESTINATION share/qml_ros2_plugin/test/)
 endif()
@@ -168,55 +190,18 @@ if(${GLOBAL_INSTALL})
     message(FATAL_ERROR "Could not find qml plugin dir. Is qml installed?")
   endif()
   message(STATUS "Plugin will be installed to ${QT_INSTALL_QML}")
-  set(QML_INSTALL_DIR "${QT_INSTALL_QML}/${TARGETPATH}")
+  set(DESTDIR "${QT_INSTALL_QML}/${TARGETPATH}")
   install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME} DESTINATION lib)
-  install(FILES ${CMAKE_CURRENT_LIST_DIR}/qmldir DESTINATION ${QML_INSTALL_DIR})
-  # Create symlink to the library instead of installing it twice
-  # If code loads the library from two separate inodes (files), the singletons will not be shared.
-  # Compute relative path from QML plugin dir to lib dir
-  file(RELATIVE_PATH REL_LIB_PATH "${QML_INSTALL_DIR}" "${CMAKE_INSTALL_PREFIX}/lib")
-
-  # Generate a script to create the symlink because install(CODE) does not support generator expressions.
-  set(INSTALL_SYMLINK_CODE "
-    file(MAKE_DIRECTORY \"\$ENV{DESTDIR}${QML_INSTALL_DIR}\")
-    file(CREATE_LINK
-      \"${REL_LIB_PATH}/$<TARGET_FILE_NAME:${PROJECT_NAME}>\"
-      \"\$ENV{DESTDIR}${QML_INSTALL_DIR}/$<TARGET_FILE_NAME:${PROJECT_NAME}>\"
-      SYMBOLIC
-      RESULT LINK_RESULT
-    )
-    if(NOT LINK_RESULT STREQUAL \"0\")
-      message(FATAL_ERROR \"Failed to create symlink: \${LINK_RESULT}. Symlink is required to prevent singleton duplication. On Windows, enable Developer Mode or run as administrator.\")
-    endif()
-  ")
-  file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/install_symlink_global_$<CONFIG>.cmake" CONTENT "${INSTALL_SYMLINK_CODE}")
-  install(CODE "include(\"${CMAKE_CURRENT_BINARY_DIR}/install_symlink_global_\${CMAKE_INSTALL_CONFIG_NAME}.cmake\")")
+  install(TARGETS ${PROJECT_NAME} DESTINATION ${DESTDIR})
+  install(FILES ${CMAKE_CURRENT_LIST_DIR}/qmldir DESTINATION ${DESTDIR})
 else()
   message(STATUS "Installing as part of a ROS2 workspace.")
   # Register plugin to be found by QML
   ament_environment_hooks(environment_setup.dsv.in)
   install(DIRECTORY include/ DESTINATION include)
   install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME} DESTINATION lib)
+  install(TARGETS ${PROJECT_NAME} DESTINATION lib/qml/Ros2)
   install(FILES qmldir DESTINATION lib/qml/Ros2)
-  # Create symlink to the library instead of installing it twice
-  # If code loads the library from two separate inodes (files), the singletons will not be shared.
-
-  # Generate a script to create the symlink because install(CODE) does not support generator expressions.
-  set(INSTALL_SYMLINK_CODE "
-    file(MAKE_DIRECTORY \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/lib/qml/Ros2\")
-    file(CREATE_LINK
-      \"../../$<TARGET_FILE_NAME:${PROJECT_NAME}>\"
-      \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/lib/qml/Ros2/$<TARGET_FILE_NAME:${PROJECT_NAME}>\"
-      SYMBOLIC
-      RESULT LINK_RESULT
-    )
-    if(NOT LINK_RESULT STREQUAL \"0\")
-      message(FATAL_ERROR \"Failed to create symlink: \${LINK_RESULT}. Symlink is required to prevent singleton duplication. On Windows, enable Developer Mode or run as administrator.\")
-    endif()
-  ")
-  file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/install_symlink_local_$<CONFIG>.cmake" CONTENT "${INSTALL_SYMLINK_CODE}")
-  install(CODE "include(\"${CMAKE_CURRENT_BINARY_DIR}/install_symlink_local_\${CMAKE_INSTALL_CONFIG_NAME}.cmake\")")
-
   # The export is only necessary if part of a ROS2 workspace
   ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
   ament_export_include_directories(include)

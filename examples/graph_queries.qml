@@ -9,15 +9,13 @@ ApplicationWindow {
   width: 620
   height: 400
 
-
-  Component.onCompleted: {
-    // Initialize ROS with the given name. The command line args are passed by the plugin
-    // Optionally, you can call init with a string list ["arg1", "arg2"] after the name to use those
-    // args instead of the ones supplied by the command line.
-    Ros2.init("qml_graph_queries_demo")
-    update()
+  // This connection makes sure the application exits if this ROS node is requested to shutdown
+  Connections {
+    target: Ros2
+    function onShutdown() {
+      Qt.quit()
+    }
   }
-
   property var topics: ({})
   property var services: ({})
   property var actions: ({})
@@ -28,7 +26,6 @@ ApplicationWindow {
     services = Ros2.getServiceNamesAndTypes()
     actions = Ros2.getActionNamesAndTypes()
   }
-
   function printNamesAndTypes(map) {
     let result = ""
     for (let key in map) {
@@ -73,4 +70,13 @@ ApplicationWindow {
       }
     }
   }
+
+  Component.onCompleted: {
+    // Initialize ROS with the given name. The command line args are passed by the plugin
+    // Optionally, you can call init with a string list ["arg1", "arg2"] after the name to use those
+    // args instead of the ones supplied by the command line.
+    Ros2.init("qml_graph_queries_demo")
+    update()
+  }
+
 }

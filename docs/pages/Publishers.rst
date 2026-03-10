@@ -15,7 +15,7 @@ created using a factory method of the Ros2 singleton.
 
   /* ... */
   ApplicationWindow {
-    property var intPublisher: Ros2.createPublisher("/intval", "example_interfaces/msg/Int32", 10)
+    property var intPublisher: Ros2.advertise("/intval", "example_interfaces/msg/Int32", 10)
     /* ... */
     property var intTransientLocalPublisher: Ros2.createPublisher("/intval_tl", "example_interfaces/msg/Int32", Ros2.QoS().transient_local())
   }

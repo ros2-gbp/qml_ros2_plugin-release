@@ -2,7 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #include "qml_ros2_plugin/image_transport_subscription.hpp"
-#include "./logging.hpp"
+#include "qml_ros2_plugin/helpers/logging.hpp"
 #include "qml_ros2_plugin/image_buffer.hpp"
 #include "qml_ros2_plugin/image_transport_manager.hpp"
 #include "qml_ros2_plugin/ros2.hpp"
@@ -56,9 +56,11 @@ void ImageTransportSubscription::onRos2Shutdown() { shutdownSubscriber(); }
 void ImageTransportSubscription::initSubscriber()
 {
   // This makes sure we lazy subscribe and only subscribe if there is a surface to write to
-  if ( surface_ == nullptr || !enabled_ || topic_.isEmpty() )
+  if ( surface_ == nullptr )
     return;
   if ( !Ros2Qml::getInstance().isInitialized() )
+    return;
+  if ( topic_.isEmpty() )
     return;
   bool was_subscribed = subscribed_;
   if ( subscribed_ ) {
@@ -68,7 +70,7 @@ void ImageTransportSubscription::initSubscriber()
   }
   // TODO Transport hints
   const rclcpp::Node::SharedPtr &node = Ros2Qml::getInstance().node();
-  image_transport::TransportHints transport_hints( node.get(), default_transport_.toStdString() );
+  image_transport::TransportHints transport_hints( *node, default_transport_.toStdString() );
   subscription_ = ImageTransportManager::getInstance().subscribe(
       node, topic_, queue_size_, transport_hints,
       [this]( const QVideoFrame &frame, const ImageInformation &info ) {
@@ -205,7 +207,6 @@ void ImageTransportSubscription::setTopic( const QString &value )
   if ( topic_ == value )
     return;
   topic_ = value;
-  initSubscriber();
   emit topicChanged();
 }
 
@@ -216,7 +217,6 @@ void ImageTransportSubscription::setDefaultTransport( const QString &value )
   if ( default_transport_ == value )
     return;
   default_transport_ = value;
-  initSubscriber();
   emit defaultTransportChanged();
 }
 

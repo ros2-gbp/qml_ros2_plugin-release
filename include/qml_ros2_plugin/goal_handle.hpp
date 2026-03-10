@@ -20,12 +20,9 @@ class GoalHandle : public QObjectRos2
   //! The goal status in form of an action_goal_status enum value:
   //! Aborted, Accepted, Canceled, Canceling, Executing, Succeeded, Unknown
   Q_PROPERTY( qml_ros2_plugin::action_goal_status::GoalStatus status READ status NOTIFY statusChanged )
-  //! The uuid of the goal.
   Q_PROPERTY( QString goalId READ goalId )
-  //! The time stamp of when the goal was accepted.
   Q_PROPERTY( qml_ros2_plugin::Time goalStamp READ goalStamp )
-  //! True if the goal is in an active state (Accepted or Executing), false if not.
-  Q_PROPERTY( bool isActive READ isActive NOTIFY statusChanged )
+  Q_PROPERTY( bool isActive READ isActive )
 public:
   GoalHandle( ros_babel_fish::BabelFishActionClient::SharedPtr client,
               ros_babel_fish::BabelFishActionClient::GoalHandle::SharedPtr handle );
@@ -39,7 +36,8 @@ public:
 
   qml_ros2_plugin::Time goalStamp() const;
 
-  bool isActive() const;
+  //! @return True if the goal is in a non-terminal state, i.e., Accepted, Executing or Canceling.
+  Q_INVOKABLE bool isActive() const;
 
   //! Sends a cancellation request to the ActionServer.
   Q_INVOKABLE void cancel();

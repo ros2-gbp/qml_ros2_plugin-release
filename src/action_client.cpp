@@ -2,11 +2,11 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #include "qml_ros2_plugin/action_client.hpp"
-#include "logging.hpp"
 #include "qml_ros2_plugin/babel_fish_dispenser.hpp"
 #include "qml_ros2_plugin/conversion/message_conversions.hpp"
 #include "qml_ros2_plugin/conversion/qml_ros_conversion.hpp"
 #include "qml_ros2_plugin/goal_handle.hpp"
+#include "qml_ros2_plugin/helpers/logging.hpp"
 #include "qml_ros2_plugin/ros2.hpp"
 
 #include <QJSEngine>
@@ -32,14 +32,6 @@ void ActionClient::onRos2Initialized()
         babel_fish_.create_action_client( node, name_.toStdString(), action_type_.toStdString() );
   } catch ( BabelFishException &ex ) {
     QML_ROS2_PLUGIN_ERROR( "Could not create ActionClient: %s", ex.what() );
-    client_ = nullptr;
-    return;
-  } catch ( std::exception &ex ) {
-    QML_ROS2_PLUGIN_ERROR( "Could not create ActionClient: %s", ex.what() );
-    client_ = nullptr;
-    return;
-  } catch ( ... ) {
-    QML_ROS2_PLUGIN_ERROR( "Could not create ActionClient: Unknown error." );
     client_ = nullptr;
     return;
   }

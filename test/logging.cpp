@@ -12,19 +12,24 @@
 #include <rclcpp/rclcpp.hpp>
 
 using namespace qml_ros2_plugin;
+using namespace std::chrono_literals;
 
+rclcpp::executors::SingleThreadedExecutor::UniquePtr executor;
 rclcpp::Node::SharedPtr node;
 
-bool waitFor( const std::function<bool()> &pred )
+void processEvents()
 {
-  using namespace std::chrono_literals;
-  int wait_count = 0;
-  while ( ++wait_count < 10 ) {
+  QCoreApplication::processEvents();
+  executor->spin_some( 1ms );
+}
+
+bool waitFor( const std::function<bool()> &pred, std::chrono::milliseconds timeout = 1s )
+{
+  auto start = std::chrono::steady_clock::now();
+  while ( ( std::chrono::steady_clock::now() - start ) < timeout ) {
+    processEvents();
     if ( pred() )
       return true;
-    QCoreApplication::processEvents();
-    rclcpp::spin_some( node );
-    std::this_thread::sleep_for( 33ms );
   }
   return false;
 }
@@ -104,7 +109,6 @@ TEST( Logging, log )
   ASSERT_EQ( log.size(), 1U );
   EXPECT_EQ( log[0].first, "Fatal Message" );
   EXPECT_EQ( log[0].second, rcl_interfaces::msg::Log::FATAL );
-  wrapper->shutdown();
 }
 
 int main( int argc, char **argv )
@@ -113,7 +117,10 @@ int main( int argc, char **argv )
   rclcpp::init( argc, argv );
   QCoreApplication app( argc, argv );
   node = rclcpp::Node::make_shared( "test_logging" );
+  executor = rclcpp::executors::SingleThreadedExecutor::make_unique();
+  executor->add_node( node );
   int result = RUN_ALL_TESTS();
+  executor.reset();
   node.reset();
   return result;
 }
