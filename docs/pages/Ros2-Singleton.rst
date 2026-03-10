@@ -1,6 +1,6 @@
-=============
+==============
 Ros2 Singleton
-=============
+==============
 
 The ``Ros2`` singleton provides interfaces to static methods and convenience
 methods.
@@ -27,6 +27,21 @@ As described in the API documentation for :cpp:func:`Ros2.init <qml_ros2_plugin:
 node name or additionally use provided command line args instead of the command
 line args provided to your executable.
 
+Additionally, you can use the init options to set options for the node, such as the namespace or domain id.
+
+.. code-block:: qml
+
+  Component.onCompleted: {
+    let initOptions = Ros2.createInitOptions()
+    initOptions.setNamespace("/my_namespace")
+    initOptions.setDomainId(42) // or initOptions.useDefaultDomainId()
+    Ros2.init("node_name", initOptions)
+  }
+
+Before application exit make sure to call ``Ros2.shutdown()`` to cleanly shutdown the node.
+In Qt application this should be done automatically, if it is not, you might get a warning in the console and the
+application could crash due to the middleware being destructed before the ROS 2 qml plugin cleaned up.
+
 Query Graph
 ------------
 
@@ -50,8 +65,15 @@ Additionally, for topics three convenience methods are also provided:
   | Queries a list of topics with the given datatype or all topics if no type provided.
 * | ``QList<TopicInfo> queryTopicInfo()``
   | Retrieves a list of all advertised topics including their datatypes. See :cpp:class:`TopicInfo`
-* | ``QString queryTopicTypes( const QString &name )``
+* | ``QStringList queryTopicTypes( const QString &name )``
   | Retrieves the datatypes for a given topic.
+
+And for actions and services:
+
+* | ``QStringList queryServices( const QString &datatype = QString())``
+  | Queries a list of services with the given datatype or all services if no type provided.
+* | ``QStringList queryActions( const QString &datatype = QString())``
+  | Queries a list of actions with the given datatype or all actions if no type provided.
 
 Example:
 
@@ -111,10 +133,16 @@ You can also save and read data that can be serialized in the yaml format using:
 API
 ---
 
+.. doxygenclass:: qml_ros2_plugin::Ros2InitOptions
+  :members:
+
 .. doxygenclass:: qml_ros2_plugin::TopicInfo
   :members:
 
 .. doxygenclass:: qml_ros2_plugin::IO
+  :members:
+
+.. doxygenclass:: qml_ros2_plugin::QoSWrapper
   :members:
 
 .. doxygenclass:: qml_ros2_plugin::Ros2QmlSingletonWrapper
