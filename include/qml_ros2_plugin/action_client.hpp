@@ -8,15 +8,17 @@
 #include "qml_ros2_plugin/qobject_ros2.hpp"
 #include "qml_ros2_plugin/time.hpp"
 
-#include <ros_babel_fish/babel_fish.hpp>
-
 #include <QJSValue>
+#include <QPointer>
 #include <QTimer>
+#include <chrono>
+#include <future>
+#include <mutex>
+#include <ros_babel_fish/babel_fish.hpp>
+#include <unordered_map>
 
 namespace qml_ros2_plugin
 {
-class NodeHandle;
-
 class GoalHandle;
 
 class ActionClient : public QObjectRos2
@@ -24,28 +26,44 @@ class ActionClient : public QObjectRos2
   Q_OBJECT
   //! True if the ActionClient is connected to the ActionServer, false otherwise.
   Q_PROPERTY( bool ready READ isServerReady NOTIFY serverReadyChanged )
+  //! The service name (topic in ROS 1).
+  Q_PROPERTY( QString name READ name CONSTANT )
   //! The type of the action. Example: action_tutorials_interfaces/action/Fibonacci
+  Q_PROPERTY( QString type READ actionType CONSTANT )
+  //! DEPRECATED: The type of the action. Example: action_tutorials_interfaces/action/Fibonacci
   Q_PROPERTY( QString actionType READ actionType CONSTANT )
+  //! Connection timeout in ms to wait for the action to become available when sending a goal.
+  Q_PROPERTY( int connectionTimeout READ connectionTimeout WRITE setConnectionTimeout NOTIFY
+                  connectionTimeoutChanged )
+
+  using clock = std::chrono::steady_clock;
+
 public:
   ActionClient( const QString &name, const QString &action_type );
 
   Q_INVOKABLE bool isServerReady() const;
 
+  QString name() const;
+
   QString actionType() const;
+
+  int connectionTimeout() const;
+
+  void setConnectionTimeout( int timeout );
 
   /*!
    * Sends a goal to the action server if it is connected.
    *
    * @param goal The goal that is sent to the action server.
    * @param options An object with optional callback members for:
-   *   * goal_response: onGoalResponse(goal_handle)
+   *   * onGoalResponse(goal_handle)
    *       goal_handle will be null if goal was rejected
-   *   * feedback: onFeedback(goal_handle, feedback_message)
-   *   * result: onResult(wrapped_result)
+   *   * onFeedback(goal_handle, feedback_message)
+   *   * onResult(wrapped_result)
    *       where wrapped_result has a *goalId*, result *code* and *result* message.
    * @return null if the action server is not connected, otherwise a GoalHandle keeping track of the state of the goal.
    */
-  Q_INVOKABLE QObject *sendGoalAsync( const QVariantMap &goal, QJSValue options = QJSValue() );
+  Q_INVOKABLE QJSValue sendGoalAsync( const QVariantMap &goal, const QJSValue &options = QJSValue() );
 
   //! Cancels all goals that are currently tracked by this client.
   Q_INVOKABLE void cancelAllGoals();
@@ -58,6 +76,7 @@ public:
   Q_INVOKABLE void cancelGoalsBefore( const QDateTime &time );
 
 signals:
+  void connectionTimeoutChanged();
 
   //! Emitted when the connected status changes, e.g., when the client connected to the server.
   void serverReadyChanged();
@@ -67,14 +86,13 @@ private slots:
   void checkServerReady();
 
   void
-  invokeGoalResponseCallback( QJSValue callback,
+  invokeGoalResponseCallback( int internal_goal_id,
                               ros_babel_fish::BabelFishActionClient::GoalHandle::SharedPtr handle );
 
-  void invokeFeedbackCallback( QJSValue callback,
-                               ros_babel_fish::BabelFishActionClient::GoalHandle::SharedPtr handle,
+  void invokeFeedbackCallback( int internal_goal_id,
                                ros_babel_fish::CompoundMessage::ConstSharedPtr feedback );
 
-  void invokeResultCallback( QJSValue callback, QString goal_id,
+  void invokeResultCallback( int internal_goal_id, QString goal_id,
                              qml_ros2_plugin::action_goal_status::GoalStatus result_code,
                              ros_babel_fish::CompoundMessage::ConstSharedPtr result );
 
@@ -83,11 +101,33 @@ private:
 
   void onRos2Shutdown() override;
 
+  int generateInternalGoalId();
+
+  std::shared_future<ros_babel_fish::BabelFishActionClient::GoalHandle::SharedPtr>
+  internalSendGoal( int internal_goal_id );
+
   ros_babel_fish::BabelFish babel_fish_;
   QString action_type_;
   QString name_;
   ros_babel_fish::BabelFishActionClient::SharedPtr client_;
+  struct PendingGoal {
+    QVariantMap goal;
+    QJSValue goal_callback;
+    QJSValue feedback_callback;
+    QJSValue result_callback;
+    std::shared_future<std::shared_ptr<ros_babel_fish::BabelFishActionClient::GoalHandle>> goal_handle_future;
+    QJSValue js_goal_handle;
+    std::promise<std::shared_ptr<ros_babel_fish::BabelFishActionClient::GoalHandle>> goal_handle_promise;
+    std::future<void> forward_goal_future;
+    clock::time_point start;
+    bool sent = false;
+  };
+  std::unordered_map<int, PendingGoal> pending_goals_;
   QTimer connect_timer_;
+  std::recursive_mutex pending_goals_mutex_;
+  QPointer<QJSEngine> engine_;
+  int connection_timeout_ =
+      10'000; // Default connection timeout for waiting action to become available in ms
 };
 } // namespace qml_ros2_plugin
 
