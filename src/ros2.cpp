@@ -7,10 +7,12 @@
 #include "qml_ros2_plugin/conversion/message_conversions.hpp"
 #include "qml_ros2_plugin/helpers/logging.hpp"
 #include "qml_ros2_plugin/publisher.hpp"
+#include "qml_ros2_plugin/qos.hpp"
 #include "qml_ros2_plugin/service_client.hpp"
 #include "qml_ros2_plugin/subscription.hpp"
 
 #include <QCoreApplication>
+#include <QHostInfo>
 #include <QJSEngine>
 #include <rcl_action/graph.h>
 #include <thread>
@@ -24,29 +26,51 @@ Ros2Qml &Ros2Qml::getInstance()
   return instance;
 }
 
-Ros2Qml::Ros2Qml() : count_wrappers( 0 ) { babel_fish_ = BabelFishDispenser::getBabelFish(); }
+Ros2Qml::Ros2Qml() : count_wrappers( 0 )
+{
+  babel_fish_ = BabelFishDispenser::getBabelFish();
+
+  auto *core_app = QCoreApplication::instance();
+  if ( !core_app )
+    return;
+  QObject::connect( QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this,
+                    &Ros2Qml::shutdown );
+}
 
 Ros2Qml::~Ros2Qml()
 {
   if ( node_ == nullptr )
     return;
-  QML_ROS2_PLUGIN_DEBUG( "Ros2Qml destructing but context still alive. Shutting down context." );
-  node_ = nullptr;
-  rclcpp::shutdown( context_, "QML Ros2 was destroyed." );
-  if ( executor_thread_.joinable() )
-    executor_thread_.join();
-  context_ = nullptr;
+
+  QML_ROS2_PLUGIN_WARN(
+      "Ros2Qml destructing but context still alive. Please call Ros2.shutdown() "
+      "before application exit to ensure safe clean up. Otherwise the middleware might crash." );
+  shutdown();
 }
+
+void Ros2Qml::registerDependant() { ++count_wrappers; }
+
+void Ros2Qml::unregisterDependant()
+{
+  int count = --count_wrappers;
+  if ( count < 0 ) {
+    QML_ROS2_PLUGIN_WARN(
+        "Stop spinning was called more often than start spinning! This is a bug!" );
+    ++count_wrappers;
+  }
+}
+
+QString Ros2Qml::hostname() const { return QHostInfo::localHostName(); }
 
 bool Ros2Qml::isInitialized() const { return context_ != nullptr; }
 
-void Ros2Qml::init( const QString &name, quint32 options )
+void Ros2Qml::init( const QString &name, Ros2InitOptions *options )
 {
   const QStringList &arguments = QCoreApplication::arguments();
   init( name, arguments, options );
 }
 
-void Ros2Qml::init( const QString &name, const QStringList &argv, quint32 )
+void Ros2Qml::init( const QString &name, const QStringList &argv, Ros2InitOptions *options )
 {
   if ( context_ != nullptr ) {
     QML_ROS2_PLUGIN_WARN( "Was already initialized. Second call to init ignored." );
@@ -56,16 +80,23 @@ void Ros2Qml::init( const QString &name, const QStringList &argv, quint32 )
   int argc = argv.size();
   std::vector<const char *> p_args( argc );
   std::vector<std::string> args( argc );
+  std::string arg_debug_string;
   for ( int i = 0; i < argv.size(); ++i ) {
     args[i] = argv[i].toStdString();
+    arg_debug_string += args[i] + " ";
     p_args[i] = args[i].c_str();
   }
+  QML_ROS2_PLUGIN_DEBUG( "Initializing QML Ros2 with args: %s", arg_debug_string.c_str() );
   context_ = rclcpp::Context::make_shared();
-  context_->init( argc, p_args.data() ); // TODO init options
+  context_->init( argc, p_args.data(),
+                  options ? options->rclcppInitOptions() : rclcpp::InitOptions() );
   rclcpp::NodeOptions node_options;
   node_options.context( context_ );
-  node_ = rclcpp::Node::make_shared( name.toStdString(),
-                                     node_options ); // TODO namespace and init options
+#if RCLCPP_VERSION_MAJOR >= 28
+  node_options.enable_logger_service( true );
+#endif
+  std::string node_namespace = options ? options->getNamespace().toStdString() : "";
+  node_ = rclcpp::Node::make_shared( name.toStdString(), node_namespace, node_options );
   rclcpp::ExecutorOptions executor_options;
   executor_options.context = context_;
   // StaticSingleThreadedExecutor may be a bit faster but will keep a reference to the subscription
@@ -74,25 +105,40 @@ void Ros2Qml::init( const QString &name, const QStringList &argv, quint32 )
   executor->add_node( node_ );
   emit initialized();
 
-  executor_thread_ = std::thread( [exec = std::move( executor )]() { exec->spin(); } );
+  executor_thread_ = std::thread( [this, exec = std::move( executor )]() {
+    while ( !is_shutdown_ ) { exec->spin_some(); }
+  } );
   QML_ROS2_PLUGIN_DEBUG( "QML Ros2 initialized." );
 }
 
-bool Ros2Qml::ok() const { return rclcpp::ok( context_ ); }
+void Ros2Qml::shutdown()
+{
+  QML_ROS2_PLUGIN_DEBUG( "Shutting down Ros2Qml..." );
+  emit aboutToShutdown();
+  is_shutdown_ = true;
+  if ( executor_thread_.joinable() )
+    executor_thread_.join();
+  rclcpp::shutdown( context_, "Shutting down Ros2Qml." );
+  node_ = nullptr;
+  context_ = nullptr;
+  QML_ROS2_PLUGIN_DEBUG( "Ros2Qml shut down." );
+}
+
+bool Ros2Qml::ok() const { return context_ != nullptr && rclcpp::ok( context_ ); }
 
 namespace
 {
-//! Converts QString datatype to std::string and adds /msg/ if it is missing.
-std::string toFullyQualifiedDatatype( const QString &datatype )
+//! Converts datatype to std::string and adds /msg/ if it is missing.
+std::string toFullyQualifiedDatatype( const std::string &datatype, const std::string &type = "msg" )
 {
-  std::string result = datatype.toStdString();
+  std::string result = datatype;
   std::string::size_type sep = result.find( '/' );
   if ( sep == std::string::npos )
     return result;
-  if ( sep + 4 < result.size() && result[sep + 1] == 'm' && result[sep + 2] == 's' &&
-       result[sep + 3] == 'g' && result[sep + 4] == '/' )
+  if ( sep + type.size() + 1 < result.size() &&
+       result.substr( sep + 1, type.size() + 1 ) == type + "/" )
     return result;
-  return result.substr( 0, sep ) + "/msg" + result.substr( sep );
+  return result.substr( 0, sep ) + "/" + type + result.substr( sep );
 }
 } // namespace
 
@@ -104,7 +150,7 @@ QStringList Ros2Qml::queryTopics( const QString &datatype ) const
   }
   auto topics_and_types = node_->get_topic_names_and_types();
   QStringList result;
-  std::string std_datatype = toFullyQualifiedDatatype( datatype );
+  std::string std_datatype = toFullyQualifiedDatatype( datatype.toStdString() );
   for ( const auto &[topic, types] : topics_and_types ) {
     if ( !std_datatype.empty() &&
          std::find( types.begin(), types.end(), std_datatype ) == types.end() )
@@ -123,6 +169,9 @@ QList<TopicInfo> Ros2Qml::queryTopicInfo() const
   auto topics_and_types = node_->get_topic_names_and_types();
   QList<TopicInfo> result;
   for ( const auto &[topic, types] : topics_and_types ) {
+    if ( topic.find( "/_action/" ) != std::string::npos ) {
+      continue;
+    }
     QStringList result_types;
     result_types.reserve( static_cast<int>( types.size() ) );
     std::transform( types.begin(), types.end(), std::back_inserter( result_types ),
@@ -162,11 +211,32 @@ QMap<QString, QStringList> Ros2Qml::getTopicNamesAndTypes() const
   auto topics_and_types = node_->get_topic_names_and_types();
   QMap<QString, QStringList> result;
   for ( const auto &[topic, types] : topics_and_types ) {
+    if ( topic.find( "/_action/" ) != std::string::npos ) {
+      continue;
+    }
     QStringList result_types;
     result_types.reserve( static_cast<int>( types.size() ) );
     std::transform( types.begin(), types.end(), std::back_inserter( result_types ),
                     QString::fromStdString );
     result.insert( QString::fromStdString( topic ), result_types );
+  }
+  return result;
+}
+
+QStringList Ros2Qml::queryServices( const QString &datatype ) const
+{
+  if ( node_ == nullptr ) {
+    QML_ROS2_PLUGIN_DEBUG( "Tried to query services before node was initialized!" );
+    return {};
+  }
+  auto service_names_and_types = node_->get_service_names_and_types();
+  QStringList result;
+  std::string std_datatype = toFullyQualifiedDatatype( datatype.toStdString(), "srv" );
+  for ( const auto &[topic, types] : service_names_and_types ) {
+    if ( !std_datatype.empty() &&
+         std::find( types.begin(), types.end(), std_datatype ) == types.end() )
+      continue;
+    result.append( QString::fromStdString( topic ) );
   }
   return result;
 }
@@ -180,11 +250,34 @@ QMap<QString, QStringList> Ros2Qml::getServiceNamesAndTypes() const
   auto service_names_and_types = node_->get_service_names_and_types();
   QMap<QString, QStringList> result;
   for ( const auto &[service_name, types] : service_names_and_types ) {
+    if ( service_name.find( "/_action/" ) != std::string::npos ) {
+      continue;
+    }
     QStringList result_types;
     result_types.reserve( static_cast<int>( types.size() ) );
     std::transform( types.begin(), types.end(), std::back_inserter( result_types ),
                     QString::fromStdString );
     result.insert( QString::fromStdString( service_name ), result_types );
+  }
+  return result;
+}
+
+QStringList Ros2Qml::queryActions( const QString &datatype ) const
+{
+  if ( node_ == nullptr ) {
+    QML_ROS2_PLUGIN_DEBUG( "Tried to query actions before node was initialized!" );
+    return {};
+  }
+  // Get all actions
+  QStringList result;
+  auto full_datatype =
+      QString::fromStdString( toFullyQualifiedDatatype( datatype.toStdString(), "action" ) );
+  QMap<QString, QStringList> action_names_and_types = getActionNamesAndTypes();
+  for ( auto it = action_names_and_types.begin(); it != action_names_and_types.end(); ++it ) {
+    if ( !full_datatype.isEmpty() &&
+         std::find( it.value().begin(), it.value().end(), full_datatype ) == it.value().end() )
+      continue;
+    result.append( it.key() );
   }
   return result;
 }
@@ -258,28 +351,6 @@ QVariant Ros2Qml::createEmptyActionGoal( const QString &datatype ) const
   return {};
 }
 
-void Ros2Qml::registerDependant() { ++count_wrappers; }
-
-void Ros2Qml::unregisterDependant()
-{
-  int count = --count_wrappers;
-  if ( count == 0 ) {
-    QML_ROS2_PLUGIN_DEBUG( "No dependants left. QML Ros2 shutting down." );
-    rclcpp::shutdown(
-        context_, "All dependants unregistered, usually that means the application is exiting." );
-    emit shutdown();
-    if ( executor_thread_.joinable() )
-      executor_thread_.join();
-    node_.reset();
-    context_.reset();
-    QML_ROS2_PLUGIN_DEBUG( "QML Ros2 shut down." );
-  } else if ( count < 0 ) {
-    QML_ROS2_PLUGIN_WARN(
-        "Stop spinning was called more often than start spinning! This is a bug!" );
-    ++count_wrappers;
-  }
-}
-
 std::shared_ptr<rclcpp::Node> Ros2Qml::node() { return node_; }
 
 /***************************************************************************************************/
@@ -290,7 +361,8 @@ Ros2QmlSingletonWrapper::Ros2QmlSingletonWrapper()
 {
   connect( &Ros2Qml::getInstance(), &Ros2Qml::initialized, this,
            &Ros2QmlSingletonWrapper::initialized );
-  connect( &Ros2Qml::getInstance(), &Ros2Qml::shutdown, this, &Ros2QmlSingletonWrapper::shutdown );
+  connect( &Ros2Qml::getInstance(), &Ros2Qml::aboutToShutdown, this,
+           &Ros2QmlSingletonWrapper::aboutToShutdown );
   Ros2Qml::getInstance().registerDependant();
 }
 
@@ -299,20 +371,46 @@ Ros2QmlSingletonWrapper::~Ros2QmlSingletonWrapper()
   Ros2Qml::getInstance().unregisterDependant();
 }
 
+QString Ros2QmlSingletonWrapper::hostname() const { return Ros2Qml::getInstance().hostname(); }
+
+QObject *Ros2QmlSingletonWrapper::createInitOptions() { return new Ros2InitOptions; }
+
+QoSWrapper Ros2QmlSingletonWrapper::QoS() { return {}; }
+
+QoSWrapper Ros2QmlSingletonWrapper::BestAvailableQoS()
+{
+  return QoSWrapper( rclcpp::BestAvailableQoS() );
+}
+QoSWrapper Ros2QmlSingletonWrapper::ClockQoS() { return QoSWrapper( rclcpp::ClockQoS() ); }
+
+QoSWrapper Ros2QmlSingletonWrapper::SensorDataQoS()
+{
+  return QoSWrapper( rclcpp::SensorDataQoS() );
+}
+
+QoSWrapper Ros2QmlSingletonWrapper::ServicesQoS() { return QoSWrapper( rclcpp::ServicesQoS() ); }
+
+QoSWrapper Ros2QmlSingletonWrapper::SystemDefaultsQoS()
+{
+  return QoSWrapper( rclcpp::SystemDefaultsQoS() );
+}
+
 bool Ros2QmlSingletonWrapper::isInitialized() const
 {
   return Ros2Qml::getInstance().isInitialized();
 }
 
-void Ros2QmlSingletonWrapper::init( const QString &name, quint32 options )
+void Ros2QmlSingletonWrapper::init( const QString &name, QObject *options )
 {
-  Ros2Qml::getInstance().init( name, options );
+  Ros2Qml::getInstance().init( name, qobject_cast<Ros2InitOptions *>( options ) );
 }
 
-void Ros2QmlSingletonWrapper::init( const QString &name, const QStringList &args, quint32 options )
+void Ros2QmlSingletonWrapper::init( const QString &name, const QStringList &args, QObject *options )
 {
-  Ros2Qml::getInstance().init( name, args, options );
+  Ros2Qml::getInstance().init( name, args, qobject_cast<Ros2InitOptions *>( options ) );
 }
+
+void Ros2QmlSingletonWrapper::shutdown() { Ros2Qml::getInstance().shutdown(); }
 
 bool Ros2QmlSingletonWrapper::ok() const { return Ros2Qml::getInstance().ok(); }
 
@@ -367,6 +465,11 @@ QStringList Ros2QmlSingletonWrapper::getTopicTypes( const QString &name ) const
   return Ros2Qml::getInstance().queryTopicTypes( name );
 }
 
+QStringList Ros2QmlSingletonWrapper::queryServices( const QString &datatype ) const
+{
+  return Ros2Qml::getInstance().queryServices( datatype );
+}
+
 QVariantMap Ros2QmlSingletonWrapper::getServiceNamesAndTypes() const
 {
   QVariantMap result;
@@ -382,6 +485,11 @@ QStringList Ros2QmlSingletonWrapper::getServiceTypes( const QString &name ) cons
   QMap<QString, QStringList> service_names_and_types =
       Ros2Qml::getInstance().getServiceNamesAndTypes();
   return service_names_and_types.value( name );
+}
+
+QStringList Ros2QmlSingletonWrapper::queryActions( const QString &datatype ) const
+{
+  return Ros2Qml::getInstance().queryActions( datatype );
 }
 
 QVariantMap Ros2QmlSingletonWrapper::getActionNamesAndTypes() const
@@ -466,25 +574,49 @@ QJSValue Ros2QmlSingletonWrapper::fatal()
 }
 
 QObject *Ros2QmlSingletonWrapper::createPublisher( const QString &topic, const QString &type,
+                                                   const qml_ros2_plugin::QoSWrapper &qos )
+{
+  return new Publisher( topic, type, qos );
+}
+
+QObject *Ros2QmlSingletonWrapper::createPublisher( const QString &topic, const QString &type,
                                                    quint32 queue_size )
 {
-  return new Publisher( topic, type, queue_size );
+  return createPublisher( topic, type, QoSWrapper().reliable().keep_last( queue_size ) );
+}
+
+QObject *Ros2QmlSingletonWrapper::createSubscription( const QString &topic, const QoSWrapper &qos )
+{
+  return new Subscription( topic, QString(), qos );
 }
 
 QObject *Ros2QmlSingletonWrapper::createSubscription( const QString &topic, quint32 queue_size )
 {
-  return new Subscription( topic, QString(), queue_size );
+  return createSubscription( topic, QoSWrapper().keep_last( queue_size ) );
+}
+
+QObject *Ros2QmlSingletonWrapper::createSubscription( const QString &topic,
+                                                      const QString &message_type,
+                                                      const QoSWrapper &qos )
+{
+  return new Subscription( topic, message_type, qos );
 }
 
 QObject *Ros2QmlSingletonWrapper::createSubscription( const QString &topic,
                                                       const QString &message_type, quint32 queue_size )
 {
-  return new Subscription( topic, message_type, queue_size );
+  return createSubscription( topic, message_type, QoSWrapper().keep_last( queue_size ) );
 }
 
 QObject *Ros2QmlSingletonWrapper::createServiceClient( const QString &name, const QString &type )
 {
-  return new ServiceClient( name, type );
+  return createServiceClient( name, type, QoSWrapper( rclcpp::ServicesQoS() ) );
+}
+
+QObject *Ros2QmlSingletonWrapper::createServiceClient( const QString &name, const QString &type,
+                                                       const qml_ros2_plugin::QoSWrapper &qos )
+{
+  return new ServiceClient( name, type, qos );
 }
 
 QObject *Ros2QmlSingletonWrapper::createActionClient( const QString &name, const QString &type )
@@ -501,7 +633,12 @@ bool Ros2QmlSingletonWrapper::initLogging()
     QML_ROS2_PLUGIN_ERROR( "You need to initialize Ros2 before calling a log function!" );
     return false;
   }
-  logger_ = qjsEngine( this )->newQObject( new Logger( node->get_logger() ) );
+  QJSEngine *engine = qjsEngine( this );
+  if ( !engine ) {
+    QML_ROS2_PLUGIN_ERROR( "Failed to get QJSEngine in initLogging. Can not create logger." );
+    return false;
+  }
+  logger_ = engine->newQObject( new Logger( node->get_logger() ) );
   return true;
 }
 } // namespace qml_ros2_plugin
