@@ -6,6 +6,8 @@
 
 #include "qml_ros2_plugin/io.hpp"
 #include "qml_ros2_plugin/logger.hpp"
+#include "qml_ros2_plugin/qos.hpp"
+#include "qml_ros2_plugin/ros2_init_options.hpp"
 #include "qml_ros2_plugin/time.hpp"
 #include "qml_ros2_plugin/topic_info.hpp"
 
@@ -35,6 +37,9 @@ public:
 
   void operator=( const Ros2Qml & ) = delete;
 
+  //! Returns the hostname of the current machine.
+  QString hostname() const;
+
   /*!
    * Checks whether ROS is initialized.
    * @return True if ROS is initialized, false otherwise.
@@ -46,7 +51,7 @@ public:
    * @param name The name of the ROS node.
    * @param options The options passed to ROS, see ros_init_options::Ros2InitOption.
    */
-  void init( const QString &name, quint32 options = 0 );
+  void init( const QString &name, Ros2InitOptions *options = nullptr );
 
   /*!
    * Initializes the ros node with the given args.
@@ -54,7 +59,12 @@ public:
    * @param args The args that are passed to ROS. Normally, these would be the command line arguments see init(const QString &, quint32)
    * @param options The options passed to ROS, see ros_init_options::Ros2InitOption.
    */
-  void init( const QString &name, const QStringList &args, quint32 options = 0 );
+  void init( const QString &name, const QStringList &args, Ros2InitOptions *options = nullptr );
+
+  /*!
+   * Shutdown the internal node. Call before application exit to enable clean up.
+   */
+  Q_INVOKABLE void shutdown();
 
   /*!
    * Can be used to query the state of ROS.
@@ -90,11 +100,25 @@ public:
   QMap<QString, QStringList> getTopicNamesAndTypes() const;
 
   /*!
+   * Queries the internal node for its services or using the optional datatype parameter for all services with the given type.
+   * @param datatype The message type to filter services for, e.g., std_srvs/srv/SetBool. Omit to query for all services.
+   * @return A list of services that matches the given datatype or all services if no datatype provided.
+   */
+  QStringList queryServices( const QString &datatype = QString() ) const;
+
+  /*!
    * Queries the internal node for its known services and their types.
    * See rclcpp::Node::get_service_names_and_types() for more information.
    * @return A map with the service names as keys and the types as values.
    */
   QMap<QString, QStringList> getServiceNamesAndTypes() const;
+
+  /*!
+   * Queries the internal node for all available actions or using the optional datatype parameter for all actions with the given type.
+   * @param datatype The message type to filter actions for, e.g., control_msgs/action/FollowJointTrajectory. Omit to query for all actions.
+   * @return A list of actions that matches the given datatype or all actions if no datatype provided.
+   */
+  QStringList queryActions( const QString &datatype = QString() ) const;
 
   /*!
    * Queries the internal node for its known actions and their types.
@@ -145,7 +169,7 @@ signals:
   void initialized();
 
   //! Emitted when this ROS node was shut down and it is time to exit.
-  void shutdown();
+  void aboutToShutdown();
 
 private:
   std::thread executor_thread_;
@@ -158,6 +182,7 @@ private:
 class Ros2QmlSingletonWrapper : public QObject
 {
   Q_OBJECT
+  Q_PROPERTY( QString hostname READ hostname CONSTANT )
   Q_PROPERTY( qml_ros2_plugin::IO io READ io CONSTANT )
   Q_PROPERTY( QJSValue debug READ debug CONSTANT )
   Q_PROPERTY( QJSValue info READ info CONSTANT )
@@ -169,14 +194,39 @@ public:
 
   ~Ros2QmlSingletonWrapper() override;
 
+  //! @copydoc Ros2Qml::hostname
+  QString hostname() const;
+
+  //! Create a Ros2InitOptions object.
+  Q_INVOKABLE QObject *createInitOptions();
+
+  //! Creates a default QoS object with Stefan Fabian's recommended settings for UIs:
+  //! best_effort and volatile with a history depth of 1.
+  Q_INVOKABLE qml_ros2_plugin::QoSWrapper QoS();
+
+  //! Creates a QoS wrapper with the settings for Clock from rclcpp.
+  Q_INVOKABLE qml_ros2_plugin::QoSWrapper ClockQoS();
+
+  //! Creates a QoS wrapper with the settings for SensorData from rclcpp.
+  Q_INVOKABLE qml_ros2_plugin::QoSWrapper SensorDataQoS();
+
+  //! Creates a QoS wrapper with the settings for Services from rclcpp.
+  Q_INVOKABLE qml_ros2_plugin::QoSWrapper ServicesQoS();
+
+  //! Creates a QoS wrapper with the settings for SystemDefaults from rclcpp.
+  Q_INVOKABLE qml_ros2_plugin::QoSWrapper SystemDefaultsQoS();
+
   //! @copydoc Ros2Qml::isRosInitialized
   Q_INVOKABLE bool isInitialized() const;
 
-  //! @copydoc Ros2Qml::init(const QString &, quint32)
-  Q_INVOKABLE void init( const QString &name, quint32 options = 0 );
+  //! @copydoc Ros2Qml::init(const QString &, Ros2InitOptions)
+  Q_INVOKABLE void init( const QString &name, QObject *options = nullptr );
 
-  //! @copydoc Ros2Qml::init(const QStringList &, const QString &, quint32)
-  Q_INVOKABLE void init( const QString &name, const QStringList &args, quint32 options );
+  //! @copydoc Ros2Qml::init(const QStringList &, const QString &, Ros2InitOptions)
+  Q_INVOKABLE void init( const QString &name, const QStringList &args, QObject *options = nullptr );
+
+  //! @copydoc Ros2Qml::shutdown
+  Q_INVOKABLE void shutdown();
 
   //! @copydoc Ros2Qml::ok
   Q_INVOKABLE bool ok() const;
@@ -189,6 +239,9 @@ public:
 
   //! Returns the namespace of the node. Returns empty string before ROS node was initialized.
   Q_INVOKABLE QString getNamespace();
+
+  //! Returns true if the given topic name is valid, false otherwise.
+  Q_INVOKABLE bool isValidTopic( const QString &topic ) const;
 
   //! @copydoc Ros2Qml::queryTopics
   Q_INVOKABLE QStringList queryTopics( const QString &datatype = QString() ) const;
@@ -204,10 +257,16 @@ public:
 
   Q_INVOKABLE QStringList getTopicTypes( const QString &name ) const;
 
+  //! @copydoc Ros2Qml::queryServices
+  Q_INVOKABLE QStringList queryServices( const QString &datatype = QString() ) const;
+
   //! @copydoc Ros2Qml::getServiceNamesAndTypes
   Q_INVOKABLE QVariantMap getServiceNamesAndTypes() const;
 
   Q_INVOKABLE QStringList getServiceTypes( const QString &name ) const;
+
+  //! @copydoc Ros2Qml::queryActions
+  Q_INVOKABLE QStringList queryActions( const QString &datatype = QString() ) const;
 
   //! @copydoc Ros2Qml::getActionNamesAndTypes
   Q_INVOKABLE QVariantMap getActionNamesAndTypes() const;
@@ -257,19 +316,32 @@ public:
    *
    * @param type The type of the messages published using this publisher.
    * @param topic The topic on which the messages are published.
-   * @param queue_size The maximum number of outgoing messages to be queued for delivery to subscribers.
    * @return A Publisher instance.
    */
   Q_INVOKABLE QObject *createPublisher( const QString &topic, const QString &type,
-                                        quint32 queue_size = 1 );
+                                        const qml_ros2_plugin::QoSWrapper &qos );
+
+  /*!
+   * @see createPublisher(const QString &, const QString &, const qml_ros2_plugin::QoSWrapper &)
+   * @param queue_size Sets the keep_last history of the qos to the given value.
+   */
+  Q_INVOKABLE QObject *createPublisher( const QString &topic, const QString &type,
+                                        quint32 queue_size = 10 );
 
   /*!
    * Creates a Subscriber to createSubscription to ROS messages.
    * Convenience function to create a subscriber in a single line.
    *
    * @param topic The topic to createSubscription to.
-   * @param queue_size The maximum number of incoming messages to be queued for processing.
+   * @param qos The QoS settings for the subscription.
    * @return A Subscriber instance.
+   */
+  Q_INVOKABLE QObject *createSubscription( const QString &topic,
+                                           const qml_ros2_plugin::QoSWrapper &qos );
+
+  /*!
+   * @see createSubscription(const QString &, const qml_ros2_plugin::QoSWrapper &)
+   * @param queue_size The keep_last history of the qos. Default: 1
    */
   Q_INVOKABLE QObject *createSubscription( const QString &topic, quint32 queue_size = 1 );
 
@@ -283,6 +355,13 @@ public:
    * @return A Subscriber instance.
    */
   Q_INVOKABLE QObject *createSubscription( const QString &topic, const QString &message_type,
+                                           const qml_ros2_plugin::QoSWrapper &qos );
+
+  /*!
+   * @see createSubscription(const QString &, const QString &, const qml_ros2_plugin::QoSWrapper &)
+   * @param queue_size The keep_last history of the qos. Default: 1
+   */
+  Q_INVOKABLE QObject *createSubscription( const QString &topic, const QString &message_type,
                                            quint32 queue_size = 1 );
 
   /*!
@@ -292,6 +371,13 @@ public:
    * @return An instance of ServiceClient.
    */
   Q_INVOKABLE QObject *createServiceClient( const QString &name, const QString &type );
+
+  /*!
+   * @copydoc createServiceClient(const QString &, const QString &)
+   * @param qos The QoS settings for the service client.
+   */
+  Q_INVOKABLE QObject *createServiceClient( const QString &name, const QString &type,
+                                            const qml_ros2_plugin::QoSWrapper &qos );
 
   /*!
    * Creates an ActionClient for the given type and the given name.
@@ -306,8 +392,8 @@ signals:
   //! @copydoc Ros2Qml::initialized
   void initialized();
 
-  //! @copydoc Ros2Qml::shutdown
-  void shutdown();
+  //! @copydoc Ros2Qml::aboutToShutdown
+  void aboutToShutdown();
 
 private:
   bool initLogging();

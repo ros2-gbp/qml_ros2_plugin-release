@@ -5,10 +5,14 @@
 #define QML_ROS2_PLUGIN_SERVICE_CLIENT_HPP
 
 #include "qml_ros2_plugin/qobject_ros2.hpp"
+#include "qml_ros2_plugin/qos.hpp"
+
 #include <QJSValue>
+#include <QPointer>
 #include <QTimer>
 #include <QVariant>
-
+#include <chrono>
+#include <mutex>
 #include <ros_babel_fish/babel_fish.hpp>
 
 namespace qml_ros2_plugin
@@ -23,12 +27,23 @@ class ServiceClient : public QObjectRos2
   Q_PROPERTY( QString name READ name CONSTANT )
   //! The type of the service, e.g., "example_interfaces/srv/AddTwoInts".
   Q_PROPERTY( QString type READ type CONSTANT )
+  //! Connection timeout in ms to wait for the service to become available when sending a request.
+  Q_PROPERTY( int connectionTimeout READ connectionTimeout WRITE setConnectionTimeout NOTIFY
+                  connectionTimeoutChanged )
+  //! How many service requests are currently pending and waiting for the response.
+  Q_PROPERTY( int pendingRequests READ pendingRequests NOTIFY pendingRequestsChanged )
+
+  using clock = std::chrono::steady_clock;
+
 public:
   /*!
    * @param name The service topic.
    * @param type The type of the service, e.g., "example_interfaces/srv/AddTwoInts"
    */
-  ServiceClient( QString name, QString type );
+  ServiceClient( QString name, QString type,
+                 const QoSWrapper &qos = QoSWrapper( rclcpp::ServicesQoS() ) );
+
+  ~ServiceClient();
 
   //! Returns whether the service is ready.
   bool isServiceReady() const;
@@ -36,6 +51,12 @@ public:
   const QString &name() const;
 
   const QString &type() const;
+
+  int connectionTimeout() const;
+
+  void setConnectionTimeout( int timeout );
+
+  int pendingRequests() const;
 
   /*!
    * Calls a service asynchronously returning immediately.
@@ -51,6 +72,10 @@ signals:
 
   void serviceReadyChanged();
 
+  void connectionTimeoutChanged();
+
+  void pendingRequestsChanged();
+
 protected:
   void onRos2Initialized() override;
 
@@ -60,14 +85,29 @@ private slots:
 
   void checkServiceReady();
 
-  void invokeCallback( QJSValue value, QVariant result );
+  void invokeCallback( int id, const QVariant &result );
 
 private:
+  int generateInternalCallbackId();
+
   ros_babel_fish::BabelFish babel_fish_;
+  QoSWrapper qos_;
   QString name_;
   QString service_type_;
   ros_babel_fish::BabelFishServiceClient::SharedPtr client_;
   QTimer connect_timer_;
+  struct WaitingServiceCallData {
+    QVariantMap request;
+    int id;
+    clock::time_point start;
+  };
+  // Queue of service calls waiting for the service to become available
+  std::vector<WaitingServiceCallData> waiting_service_calls_;
+  std::unordered_map<int, QJSValue> pending_callbacks_;
+  std::mutex check_ready_mutex_;
+  QPointer<QJSEngine> engine_;
+  int pending_requests_ = 0;
+  int connection_timeout_ = 10'000; // Default connection timeout for waiting service calls in ms
 };
 } // namespace qml_ros2_plugin
 
