@@ -28,16 +28,6 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 ## Build ##
 ###########
 
-## Specify additional locations of header files
-## Your package locations should be listed before other locations
-include_directories(
-  include
-  ${Qt5Core_INCLUDE_DIRS}
-  ${Qt5Multimedia_INCLUDE_DIRS}
-  ${Qt5Qml_INCLUDE_DIRS}
-  ${Qt5Quick_INCLUDE_DIRS}
-)
-
 set(SOURCES
   include/qml_ros2_plugin/conversion/message_conversions.hpp
   include/qml_ros2_plugin/conversion/qml_ros_conversion.hpp
@@ -54,7 +44,9 @@ set(SOURCES
   include/qml_ros2_plugin/logger.hpp
   include/qml_ros2_plugin/publisher.hpp
   include/qml_ros2_plugin/qobject_ros2.hpp
+  include/qml_ros2_plugin/qos.hpp
   include/qml_ros2_plugin/ros2.hpp
+  include/qml_ros2_plugin/ros2_init_options.hpp
   include/qml_ros2_plugin/service_client.hpp
   include/qml_ros2_plugin/subscription.hpp
   include/qml_ros2_plugin/tf_transform.hpp
@@ -75,7 +67,9 @@ set(SOURCES
   src/publisher.cpp
   src/qml_ros2_plugin.cpp
   src/qobject_ros2.cpp
+  src/qos.cpp
   src/ros2.cpp
+  src/ros2_init_options.cpp
   src/service_client.cpp
   src/subscription.cpp
   src/tf_transform.cpp
@@ -83,8 +77,25 @@ set(SOURCES
 )
 
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
-target_link_libraries(${PROJECT_NAME} Qt5::Core Qt5::Multimedia Qt5::Qml Qt5::Quick ${YAML_CPP_LIBRARIES})
-ament_target_dependencies(${PROJECT_NAME} ament_index_cpp rclcpp image_transport ros_babel_fish tf2_ros)
+target_include_directories(${PROJECT_NAME} PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_include_directories(${PROJECT_NAME} PUBLIC
+  ${Qt5Core_INCLUDE_DIRS}
+  ${Qt5Multimedia_INCLUDE_DIRS}
+  ${Qt5Qml_INCLUDE_DIRS}
+  ${Qt5Quick_INCLUDE_DIRS}
+)
+target_link_libraries(${PROJECT_NAME} PUBLIC
+  Qt5::Core Qt5::Multimedia Qt5::Qml Qt5::Quick ${YAML_CPP_LIBRARIES}
+  ament_index_cpp::ament_index_cpp
+  image_transport::image_transport
+  rclcpp::rclcpp
+  ros_babel_fish::ros_babel_fish
+  tf2_ros::static_transform_broadcaster_node
+  tf2_ros::tf2_ros
+)
 
 #############
 ## Testing ##
@@ -100,34 +111,52 @@ if(BUILD_TESTING)
   find_package(std_srvs REQUIRED)
   find_package(Qt5Test REQUIRED)
 
-  set(TEST_DEPENDENCIES example_interfaces ros_babel_fish_test_msgs std_srvs)
+  
 
   ament_add_gtest(test_communication test/communication.cpp)
-  ament_target_dependencies(test_communication ${TEST_DEPENDENCIES})
-  target_link_libraries(test_communication ${PROJECT_NAME} Qt5::Test)
+  target_link_libraries(test_communication 
+    ${example_interfaces_TARGETS}
+    ${ros_babel_fish_test_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${PROJECT_NAME} Qt5::Test)
 
   ament_add_gtest(test_image_conversions test/image_conversions.cpp)
-  ament_target_dependencies(test_image_conversions  ${TEST_DEPENDENCIES})
-  target_link_libraries(test_image_conversions ${PROJECT_NAME})
+  target_link_libraries(test_image_conversions
+    ${example_interfaces_TARGETS}
+    ${ros_babel_fish_test_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${PROJECT_NAME})
 
   ament_add_gtest(test_image_transport_subscriber test/image_transport_subscriber.cpp)
-  ament_target_dependencies(test_image_transport_subscriber  ${TEST_DEPENDENCIES})
-  target_link_libraries(test_image_transport_subscriber ${PROJECT_NAME})
+  target_link_libraries(test_image_transport_subscriber
+    ${example_interfaces_TARGETS}
+    ${ros_babel_fish_test_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${PROJECT_NAME})
 
   ament_add_gtest(test_message_conversions test/message_conversions.cpp)
-  ament_target_dependencies(test_message_conversions  ${TEST_DEPENDENCIES})
-  target_link_libraries(test_message_conversions ${PROJECT_NAME})
+  target_link_libraries(test_message_conversions
+    ${example_interfaces_TARGETS}
+    ${ros_babel_fish_test_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${PROJECT_NAME})
 
   ament_add_gtest(test_ros_life_cycle test/ros_life_cycle.cpp)
-  ament_target_dependencies(test_ros_life_cycle  ${TEST_DEPENDENCIES})
-  target_link_libraries(test_ros_life_cycle ${PROJECT_NAME})
+  target_link_libraries(test_ros_life_cycle
+    ${example_interfaces_TARGETS}
+    ${ros_babel_fish_test_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${PROJECT_NAME})
 
   ament_add_gtest(test_logging test/logging.cpp)
   target_link_libraries(test_logging ${PROJECT_NAME})
   #
   ament_add_gtest(test_io test/io.cpp)
-  ament_target_dependencies(test_io  ${TEST_DEPENDENCIES})
-  target_link_libraries(test_io ${PROJECT_NAME})
+  target_link_libraries(test_io
+    ${example_interfaces_TARGETS}
+    ${ros_babel_fish_test_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${PROJECT_NAME})
 
   install(DIRECTORY test/test_io DESTINATION share/qml_ros2_plugin/test/)
 endif()
@@ -162,16 +191,21 @@ if(${GLOBAL_INSTALL})
   endif()
   message(STATUS "Plugin will be installed to ${QT_INSTALL_QML}")
   set(DESTDIR "${QT_INSTALL_QML}/${TARGETPATH}")
+  install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME} DESTINATION lib)
   install(TARGETS ${PROJECT_NAME} DESTINATION ${DESTDIR})
   install(FILES ${CMAKE_CURRENT_LIST_DIR}/qmldir DESTINATION ${DESTDIR})
 else()
   message(STATUS "Installing as part of a ROS2 workspace.")
   # Register plugin to be found by QML
   ament_environment_hooks(environment_setup.dsv.in)
-  install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME} DESTINATION lib/Ros2)
-  install(FILES qmldir DESTINATION lib/Ros2)
+  install(DIRECTORY include/ DESTINATION include)
+  install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME} DESTINATION lib)
+  install(TARGETS ${PROJECT_NAME} DESTINATION lib/qml/Ros2)
+  install(FILES qmldir DESTINATION lib/qml/Ros2)
   # The export is only necessary if part of a ROS2 workspace
   ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
+  ament_export_include_directories(include)
+  ament_export_dependencies(ament_index_cpp rclcpp image_transport ros_babel_fish tf2_ros Qt5Core Qt5Qml Qt5Quick Qt5Multimedia)
 endif()
 
 
