@@ -2,12 +2,7 @@
 Changelog for package qml_ros2_plugin
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-1.26.31 (2026-03-10)
---------------------
-* Revert humble incompatible changes.
-* Contributors: Stefan Fabian
-
-1.26.30 (2026-03-09)
+2.26.30 (2026-03-10)
 --------------------
 * Fixed yaml conversion not handling QJSValue correctly.
 * Backport improvements from qml6_ros2_plugin.
