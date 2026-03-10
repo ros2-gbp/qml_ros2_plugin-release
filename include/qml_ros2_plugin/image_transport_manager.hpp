@@ -12,6 +12,11 @@ namespace qml_ros2_plugin
 {
 class ImageTransportSubscriptionHandle;
 
+struct ImageInformation {
+  rclcpp::Time timestamp;
+  std::string encoding;
+};
+
 /*!
  * Encapsulates the image transport communication to share the subscription resources, avoiding multiple conversions of
  *  the same image and subscription overhead if multiple cameras are set to throttle.
@@ -25,28 +30,28 @@ class ImageTransportManager
   class Subscription;
 
 public:
+  using ImageCallback = std::function<void( const QVideoFrame &, const ImageInformation & )>;
   static ImageTransportManager &getInstance();
 
   /*!
    * Note: Can only be called with a ready NodeHandle!
    *
-   * Subscribes to the given topic with the given settings. Makes sure that multiple subscriptions_ (especially throttled)
-   *  only result in a single (throttled) subscription.
-   * If multiple subscriptions_ of the same topic and namespace are created, the settings of the first subscription are used.
-   * Except for the throttle interval where the minimum value across all active subscriptions_ is used.
-   * @param qtopic
-   * @param queue_size
-   * @param transport_hints
-   * @param callback
-   * @param surface
-   * @param throttle_interval
-   * @return
+   * Subscribes to the given topic with the given settings. Makes sure that multiple subscriptions
+   *  only result in a single subscription.
+   * If multiple subscriptions of the same topic and namespace are created, the settings of the
+   * first subscription are used.
    */
+  std::shared_ptr<ImageTransportSubscriptionHandle>
+  subscribe( const rclcpp::Node::SharedPtr &node, const QString &qtopic, quint32 queue_size,
+             const image_transport::TransportHints &transport_hints, const ImageCallback &callback,
+             const QList<QVideoFrame::PixelFormat> &supported_pixel_formats );
+
+  // Overload for backwards compatibility. Is removed in a Qt6 version.
   std::shared_ptr<ImageTransportSubscriptionHandle>
   subscribe( const rclcpp::Node::SharedPtr &node, const QString &qtopic, quint32 queue_size,
              const image_transport::TransportHints &transport_hints,
              const std::function<void( const QVideoFrame & )> &callback,
-             QAbstractVideoSurface *surface = nullptr );
+             const QList<QVideoFrame::PixelFormat> &supported_pixel_formats );
 
 private:
   std::shared_ptr<SubscriptionManager> subscription_manager_;
@@ -76,8 +81,8 @@ public:
 
 private:
   std::shared_ptr<ImageTransportManager::Subscription> subscription;
-  QAbstractVideoSurface *surface = nullptr;
-  std::function<void( const QVideoFrame & )> callback;
+  QList<QVideoFrame::PixelFormat> supported_pixel_formats;
+  ImageTransportManager::ImageCallback callback;
   double framerate_ = 0;
   int network_latency = -1;
   int processing_latency = -1;
