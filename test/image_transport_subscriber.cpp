@@ -12,24 +12,27 @@
 #include <QCoreApplication>
 #include <rclcpp/rclcpp.hpp>
 
+using namespace std::chrono_literals;
+
+rclcpp::executors::SingleThreadedExecutor::UniquePtr executor;
 rclcpp::Node::SharedPtr node;
 
-void processSomeEvents( int n = 10, int sleep_duration_us = 5000 )
+void processSomeEvents( int n = 100, int sleep_duration_us = 1000 )
 {
   for ( int i = 0; i < n; ++i ) {
     usleep( sleep_duration_us );
     QCoreApplication::processEvents();
-    rclcpp::spin_some( node );
+    executor->spin_some( 1ms );
   }
 }
 
-//! @param wait_count Max time to wait in increments of 33 ms
-bool waitFor( const std::function<bool()> &pred, int wait_count = 10 )
+//! @param wait_count Max time to wait in increments of 100 ms
+bool waitFor( const std::function<bool()> &pred, int wait_count = 50 )
 {
   while ( --wait_count > 0 ) {
     if ( pred() )
       return true;
-    processSomeEvents( 1, 33000 );
+    processSomeEvents();
   }
   return false;
 }
@@ -79,11 +82,12 @@ struct MockNoFormatSurface : public QAbstractVideoSurface {
 
 TEST( ImageTransportSubscription, testCorrectFormat )
 {
-  auto img_pub = node->create_publisher<sensor_msgs::msg::Image>( "image", 10 );
+  auto img_pub = node->create_publisher<sensor_msgs::msg::Image>( "qml_ros2_plugin_test_image", 10 );
   ImageTransportSubscription subscriber( "test", 10 );
   EXPECT_EQ( subscriber.topic(), "test" );
-  subscriber.setTopic( "image" );
-  EXPECT_EQ( subscriber.topic(), "image" ); // Before subscribing the topic name is not resolved.
+  subscriber.setTopic( "qml_ros2_plugin_test_image" );
+  // Before subscribing the topic name is not resolved.
+  EXPECT_EQ( subscriber.topic(), "qml_ros2_plugin_test_image" );
   EXPECT_EQ( subscriber.defaultTransport(), "compressed" ); // compressed is default
   subscriber.setDefaultTransport( "raw" );
   EXPECT_EQ( subscriber.defaultTransport(), "raw" );
@@ -102,7 +106,7 @@ TEST( ImageTransportSubscription, testCorrectFormat )
   img_pub->publish( *image );
   processSomeEvents();
 
-  ASSERT_TRUE( waitFor( [&mock_surface] { return mock_surface.last_frame.isValid(); } ) );
+  ASSERT_TRUE( waitFor( [&mock_surface] { return mock_surface.last_frame.isValid(); }, 100 ) );
   ASSERT_EQ( mock_surface.last_frame.pixelFormat(), QVideoFrame::Format_RGB24 );
   EXPECT_TRUE( mock_surface.last_frame.map( QAbstractVideoBuffer::MapMode::ReadOnly ) );
   EXPECT_EQ( mock_surface.last_frame.mappedBytes(), 3 * 3 * 2 );
@@ -112,10 +116,11 @@ TEST( ImageTransportSubscription, testCorrectFormat )
 
 TEST( ImageTransportSubscription, testWrongFormat )
 {
-  auto img_pub = node->create_publisher<sensor_msgs::msg::Image>( "wrong_image", 10 );
-  ImageTransportSubscription subscriber( "wrong_image", 10 );
-  EXPECT_EQ( subscriber.topic(),
-             "wrong_image" ); // Before subscribing the topic name is not resolved.
+  auto img_pub =
+      node->create_publisher<sensor_msgs::msg::Image>( "qml_ros2_plugin_test_wrong_image", 10 );
+  ImageTransportSubscription subscriber( "qml_ros2_plugin_test_wrong_image", 10 );
+  // Before subscribing the topic name is not resolved.
+  EXPECT_EQ( subscriber.topic(), "qml_ros2_plugin_test_wrong_image" );
   subscriber.setDefaultTransport( "raw" );
   EXPECT_EQ( subscriber.defaultTransport(), "raw" );
   MockNoFormatSurface mock_surface;
@@ -131,11 +136,8 @@ TEST( ImageTransportSubscription, testWrongFormat )
   image->encoding = sensor_msgs::image_encodings::RGB8;
   image->data = { 255, 0, 0, 0, 255, 0, 200, 100, 0, 0, 100, 200, 50, 100, 20, 150, 150, 200 };
   img_pub->publish( *image );
-  mock_surface.stop();
-  processSomeEvents( 100 );
-
   EXPECT_FALSE( mock_surface.last_frame.isValid() );
-  EXPECT_FALSE( subscriber.subscribed() );
+  EXPECT_TRUE( waitFor( [&subscriber]() { return !subscriber.subscribed(); }, 30 ) );
 }
 
 int main( int argc, char **argv )
@@ -144,11 +146,15 @@ int main( int argc, char **argv )
   QCoreApplication app( argc, argv );
   rclcpp::init( argc, argv );
   node = rclcpp::Node::make_shared( "test_image_transport_subscriber" );
+  executor = rclcpp::executors::SingleThreadedExecutor::make_unique();
+  executor->add_node( node );
   Ros2Qml::getInstance().init( "test_image_transport_subscriber_qml" );
   Ros2Qml::getInstance().registerDependant();
   int result = RUN_ALL_TESTS();
+  executor.reset();
   node.reset();
   Ros2Qml::getInstance().unregisterDependant();
+  Ros2Qml::getInstance().shutdown();
   rclcpp::shutdown();
   return result;
 }
