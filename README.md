@@ -1,3 +1,26 @@
+## qml_ros2_plugin (rolling) - 3.26.30-1
+
+The packages in the `qml_ros2_plugin` repository were released into the `rolling` distro by running `/usr/bin/bloom-release --rosdistro rolling qml_ros2_plugin` on `Tue, 10 Mar 2026 10:19:53 -0000`
+
+The `qml_ros2_plugin` package was released.
+
+Version of package(s) in repository `qml_ros2_plugin`:
+
+- upstream repository: https://github.com/StefanFabian/qml_ros2_plugin.git
+- release repository: https://github.com/ros2-gbp/qml_ros2_plugin-release.git
+- rosdistro version: `2.25.2-2`
+- old version: `2.25.2-2`
+- new version: `3.26.30-1`
+
+Versions of tools used:
+
+- bloom version: `0.13.0`
+- catkin_pkg version: `1.1.0`
+- rosdep version: `0.26.0`
+- rosdistro version: `1.0.1`
+- vcstools version: `0.1.42`
+
+
 ## qml_ros2_plugin (jazzy) - 2.26.30-1
 
 The packages in the `qml_ros2_plugin` repository were released into the `jazzy` distro by running `/usr/bin/bloom-release --rosdistro jazzy --edit-track qml_ros2_plugin` on `Tue, 10 Mar 2026 09:57:03 -0000`
