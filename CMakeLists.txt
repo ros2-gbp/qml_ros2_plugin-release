@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.14)
 project(qml_ros2_plugin VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 17)
 
@@ -28,16 +28,6 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 ## Build ##
 ###########
 
-## Specify additional locations of header files
-## Your package locations should be listed before other locations
-include_directories(
-  include
-  ${Qt5Core_INCLUDE_DIRS}
-  ${Qt5Multimedia_INCLUDE_DIRS}
-  ${Qt5Qml_INCLUDE_DIRS}
-  ${Qt5Quick_INCLUDE_DIRS}
-)
-
 set(SOURCES
   include/qml_ros2_plugin/conversion/message_conversions.hpp
   include/qml_ros2_plugin/conversion/qml_ros_conversion.hpp
@@ -52,9 +42,12 @@ set(SOURCES
   include/qml_ros2_plugin/image_transport_subscription.hpp
   include/qml_ros2_plugin/io.hpp
   include/qml_ros2_plugin/logger.hpp
+  include/qml_ros2_plugin/message_item_model.hpp
   include/qml_ros2_plugin/publisher.hpp
   include/qml_ros2_plugin/qobject_ros2.hpp
+  include/qml_ros2_plugin/qos.hpp
   include/qml_ros2_plugin/ros2.hpp
+  include/qml_ros2_plugin/ros2_init_options.hpp
   include/qml_ros2_plugin/service_client.hpp
   include/qml_ros2_plugin/subscription.hpp
   include/qml_ros2_plugin/tf_transform.hpp
@@ -72,10 +65,13 @@ set(SOURCES
   src/io.cpp
   src/logger.cpp
   src/message_conversions.cpp
+  src/message_item_model.cpp
   src/publisher.cpp
   src/qml_ros2_plugin.cpp
   src/qobject_ros2.cpp
+  src/qos.cpp
   src/ros2.cpp
+  src/ros2_init_options.cpp
   src/service_client.cpp
   src/subscription.cpp
   src/tf_transform.cpp
@@ -83,6 +79,17 @@ set(SOURCES
 )
 
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
+target_include_directories(${PROJECT_NAME} PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_compile_definitions(${PROJECT_NAME} PRIVATE RCLCPP_MAJOR_VERSION=${rclcpp_VERSION_MAJOR})
+target_include_directories(${PROJECT_NAME} PUBLIC
+  ${Qt5Core_INCLUDE_DIRS}
+  ${Qt5Multimedia_INCLUDE_DIRS}
+  ${Qt5Qml_INCLUDE_DIRS}
+  ${Qt5Quick_INCLUDE_DIRS}
+)
 target_link_libraries(${PROJECT_NAME} Qt5::Core Qt5::Multimedia Qt5::Qml Qt5::Quick ${YAML_CPP_LIBRARIES})
 ament_target_dependencies(${PROJECT_NAME} ament_index_cpp rclcpp image_transport ros_babel_fish tf2_ros)
 
@@ -161,17 +168,59 @@ if(${GLOBAL_INSTALL})
     message(FATAL_ERROR "Could not find qml plugin dir. Is qml installed?")
   endif()
   message(STATUS "Plugin will be installed to ${QT_INSTALL_QML}")
-  set(DESTDIR "${QT_INSTALL_QML}/${TARGETPATH}")
-  install(TARGETS ${PROJECT_NAME} DESTINATION ${DESTDIR})
-  install(FILES ${CMAKE_CURRENT_LIST_DIR}/qmldir DESTINATION ${DESTDIR})
+  set(QML_INSTALL_DIR "${QT_INSTALL_QML}/${TARGETPATH}")
+  install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME} DESTINATION lib)
+  install(FILES ${CMAKE_CURRENT_LIST_DIR}/qmldir DESTINATION ${QML_INSTALL_DIR})
+  # Create symlink to the library instead of installing it twice
+  # If code loads the library from two separate inodes (files), the singletons will not be shared.
+  # Compute relative path from QML plugin dir to lib dir
+  file(RELATIVE_PATH REL_LIB_PATH "${QML_INSTALL_DIR}" "${CMAKE_INSTALL_PREFIX}/lib")
+
+  # Generate a script to create the symlink because install(CODE) does not support generator expressions.
+  set(INSTALL_SYMLINK_CODE "
+    file(MAKE_DIRECTORY \"\$ENV{DESTDIR}${QML_INSTALL_DIR}\")
+    file(CREATE_LINK
+      \"${REL_LIB_PATH}/$<TARGET_FILE_NAME:${PROJECT_NAME}>\"
+      \"\$ENV{DESTDIR}${QML_INSTALL_DIR}/$<TARGET_FILE_NAME:${PROJECT_NAME}>\"
+      SYMBOLIC
+      RESULT LINK_RESULT
+    )
+    if(NOT LINK_RESULT STREQUAL \"0\")
+      message(FATAL_ERROR \"Failed to create symlink: \${LINK_RESULT}. Symlink is required to prevent singleton duplication. On Windows, enable Developer Mode or run as administrator.\")
+    endif()
+  ")
+  file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/install_symlink_global_$<CONFIG>.cmake" CONTENT "${INSTALL_SYMLINK_CODE}")
+  install(CODE "include(\"${CMAKE_CURRENT_BINARY_DIR}/install_symlink_global_\${CMAKE_INSTALL_CONFIG_NAME}.cmake\")")
 else()
   message(STATUS "Installing as part of a ROS2 workspace.")
   # Register plugin to be found by QML
   ament_environment_hooks(environment_setup.dsv.in)
-  install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME} DESTINATION lib/Ros2)
-  install(FILES qmldir DESTINATION lib/Ros2)
+  install(DIRECTORY include/ DESTINATION include)
+  install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME} DESTINATION lib)
+  install(FILES qmldir DESTINATION lib/qml/Ros2)
+  # Create symlink to the library instead of installing it twice
+  # If code loads the library from two separate inodes (files), the singletons will not be shared.
+
+  # Generate a script to create the symlink because install(CODE) does not support generator expressions.
+  set(INSTALL_SYMLINK_CODE "
+    file(MAKE_DIRECTORY \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/lib/qml/Ros2\")
+    file(CREATE_LINK
+      \"../../$<TARGET_FILE_NAME:${PROJECT_NAME}>\"
+      \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/lib/qml/Ros2/$<TARGET_FILE_NAME:${PROJECT_NAME}>\"
+      SYMBOLIC
+      RESULT LINK_RESULT
+    )
+    if(NOT LINK_RESULT STREQUAL \"0\")
+      message(FATAL_ERROR \"Failed to create symlink: \${LINK_RESULT}. Symlink is required to prevent singleton duplication. On Windows, enable Developer Mode or run as administrator.\")
+    endif()
+  ")
+  file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/install_symlink_local_$<CONFIG>.cmake" CONTENT "${INSTALL_SYMLINK_CODE}")
+  install(CODE "include(\"${CMAKE_CURRENT_BINARY_DIR}/install_symlink_local_\${CMAKE_INSTALL_CONFIG_NAME}.cmake\")")
+
   # The export is only necessary if part of a ROS2 workspace
   ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
+  ament_export_include_directories(include)
+  ament_export_dependencies(ament_index_cpp rclcpp image_transport ros_babel_fish tf2_ros Qt5Core Qt5Qml Qt5Quick Qt5Multimedia)
 endif()
 
 
