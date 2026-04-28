@@ -2,11 +2,6 @@
 Changelog for package qml_ros2_plugin
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-3.26.31 (2026-03-10)
---------------------
-* Interface changes for kilted.
-* Contributors: Stefan Fabian
-
 3.26.30 (2026-03-10)
 --------------------
 * Fixed yaml conversion not handling QJSValue correctly.
